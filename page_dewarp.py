@@ -16,6 +16,7 @@ import cv2
 from PIL import Image
 import numpy as np
 import scipy.optimize
+from scipy.integrate import quad
 
 # for some reason pylint complains about cv2 members being undefined :(
 # pylint: disable=E1101
@@ -780,6 +781,11 @@ def get_page_dims(corners, rough_dims, params):
 
 def remap_image(name, img, small, page_dims, params):
 
+    alpha, beta = tuple(params[CUBIC_IDX])
+
+    def f(x):
+        return np.sqrt(1+(3*(alpha + beta)*x**2-(4*alpha+2*beta)*x+alpha)**2)
+    total_len = quad(f, 0, 1)[0]
     height = 0.5 * page_dims[1] * OUTPUT_ZOOM * img.shape[0]
     height = round_nearest_multiple(height, REMAP_DECIMATE)
 
@@ -802,6 +808,8 @@ def remap_image(name, img, small, page_dims, params):
     page_xy_coords = page_xy_coords.astype(np.float32)
 
     image_points = project_xy(page_xy_coords, params)
+    image_points[:, 0, 0] = map(lambda x: quad(f, 0, x)[0]/total_len,
+                                image_points[:, 0, 0])
     image_points = norm2pix(img.shape, image_points, False)
 
     image_x_coords = image_points[:, 0, 0].reshape(page_x_coords.shape)
