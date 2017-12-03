@@ -14,9 +14,10 @@ import sys
 import datetime
 import cv2
 from PIL import Image
-import numpy as np
+import autograd.numpy as np
 import scipy.optimize
 from scipy.integrate import quad
+from autograd import grad
 
 # for some reason pylint complains about cv2 members being undefined :(
 # pylint: disable=E1101
@@ -26,7 +27,7 @@ PAGE_MARGIN_Y = 20       # reduced px to ignore near T/B edge
 
 OUTPUT_ZOOM = 1.0        # how much to zoom output relative to *original* image
 OUTPUT_DPI = 300         # just affects stated DPI of PNG, not appearance
-REMAP_DECIMATE = 16      # downscaling factor for remapping image
+REMAP_DECIMATE = 32      # downscaling factor for remapping image
 
 ADAPTIVE_WINSZ = 55      # window size for adaptive threshold in reduced px
 
@@ -199,39 +200,69 @@ def get_default_params(corners, ycoords, xcoords):
 
 
 def project_xy(xy_coords, pvec):
-
-    # get cubic polynomial coefficients given
-    #
-    #  f(0) = 0, f'(0) = alpha
-    #  f(1) = 0, f'(1) = beta
-
-    alpha, beta = tuple(pvec[CUBIC_IDX])
-
-    poly = np.array([
-        alpha + beta,
-        -2*alpha - beta,
-        alpha,
-        0])
-
     xy_coords = xy_coords.reshape((-1, 2))
-    z_coords = np.polyval(poly, xy_coords[:, 0])
-
+    alpha = pvec[CUBIC_IDX][0]
+    beta = pvec[CUBIC_IDX][1]
+    rvec = pvec[RVEC_IDX].reshape((-1, 1))
+    tvec = pvec[TVEC_IDX].reshape((1, -1))
+    theta = np.linalg.norm(rvec.reshape(-1), 2)
+    r = rvec/theta
+    R = np.cos(theta)*np.eye(3) + (1 - np.cos(theta))*np.dot(r, r.T) + \
+        np.sin(theta)*np.array([[0, -r[2, 0], r[1, 0]],
+                                [r[2, 0], 0, -r[0, 0]],
+                                [-r[1, 0], r[0, 0], 0]])
+    x_coords = xy_coords[:, 0]
+    z_coords = (alpha+beta)*x_coords**3-(2*alpha+beta)*x_coords**2+alpha*x_coords
     objpoints = np.hstack((xy_coords, z_coords.reshape((-1, 1))))
+    tmp = np.dot(objpoints, R.T) + tvec
+    image_points = tmp[:, :2]/tmp[:, 2:] * FOCAL_LENGTH
+    return image_points.reshape(-1, 1, 2)
 
-    image_points, _ = cv2.projectPoints(objpoints,
-                                        pvec[RVEC_IDX],
-                                        pvec[TVEC_IDX],
-                                        K, np.zeros(5))
 
-    return image_points
+#==============================================================================
+# def project_xy(xy_coords, pvec):
+# 
+#     # get cubic polynomial coefficients given
+#     #
+#     #  f(0) = 0, f'(0) = alpha
+#     #  f(1) = 0, f'(1) = beta
+# 
+#     alpha, beta = tuple(pvec[CUBIC_IDX])
+# 
+#     poly = np.array([
+#         alpha + beta,
+#         -2*alpha - beta,
+#         alpha,
+#         0])
+# 
+#     xy_coords = xy_coords.reshape((-1, 2))
+#     z_coords = np.polyval(poly, xy_coords[:, 0])
+# 
+#     objpoints = np.hstack((xy_coords, z_coords.reshape((-1, 1))))
+# 
+#     image_points, _ = cv2.projectPoints(objpoints,
+#                                         pvec[RVEC_IDX],
+#                                         pvec[TVEC_IDX],
+#                                         K, np.zeros(5))
+# 
+#     return image_points
+#==============================================================================
+
+
+#==============================================================================
+# def project_keypoints(pvec, keypoint_index):
+# 
+#     xy_coords = pvec[keypoint_index]
+#     xy_coords[0, :] = 0
+# 
+#     return project_xy(xy_coords, pvec)
+#==============================================================================
 
 
 def project_keypoints(pvec, keypoint_index):
 
-    xy_coords = pvec[keypoint_index]
-    xy_coords[0, :] = 0
-
-    return project_xy(xy_coords, pvec)
+    xy_coords = pvec[keypoint_index[1:, :]]
+    return project_xy(np.vstack((np.zeros((1, 2)), xy_coords)), pvec)
 
 
 def resize_to_screen(src, maxw=1280, maxh=700, copy=False):
@@ -729,6 +760,39 @@ def make_keypoint_index(span_counts):
     return keypoint_index
 
 
+#==============================================================================
+# def optimize_params(name, small, dstpoints, span_counts, params):
+# 
+#     keypoint_index = make_keypoint_index(span_counts)
+# 
+#     def objective(pvec):
+#         ppts = project_keypoints(pvec, keypoint_index)
+#         return np.sum((dstpoints - ppts)**2)
+# 
+#     print '  initial objective is', objective(params)
+# 
+#     if DEBUG_LEVEL >= 1:
+#         projpts = project_keypoints(params, keypoint_index)
+#         display = draw_correspondences(small, dstpoints, projpts)
+#         debug_show(name, 4, 'keypoints before', display)
+# 
+#     print '  optimizing', len(params), 'parameters...'
+#     start = datetime.datetime.now()
+#     res = scipy.optimize.minimize(objective, params, method='Powell')
+#     end = datetime.datetime.now()
+#     print '  optimization took', round((end-start).total_seconds(), 2), 'sec.'
+#     print '  final objective is', res.fun
+#     params = res.x
+# 
+#     if DEBUG_LEVEL >= 1:
+#         projpts = project_keypoints(params, keypoint_index)
+#         display = draw_correspondences(small, dstpoints, projpts)
+#         debug_show(name, 5, 'keypoints after', display)
+# 
+#     return params
+#==============================================================================
+
+
 def optimize_params(name, small, dstpoints, span_counts, params):
 
     keypoint_index = make_keypoint_index(span_counts)
@@ -746,8 +810,8 @@ def optimize_params(name, small, dstpoints, span_counts, params):
 
     print '  optimizing', len(params), 'parameters...'
     start = datetime.datetime.now()
-    res = scipy.optimize.minimize(objective, params,
-                                  method='Powell')
+    res = scipy.optimize.minimize(objective, params, # jac=grad(objective),
+                                  method='L-BFGS-B')
     end = datetime.datetime.now()
     print '  optimization took', round((end-start).total_seconds(), 2), 'sec.'
     print '  final objective is', res.fun
@@ -810,7 +874,7 @@ def remap_image(name, img, small, page_dims, params):
     image_points = project_xy(page_xy_coords, params)
     image_points[:, 0, 0] = map(lambda x: quad(f, 0, x)[0]/total_len,
                                 image_points[:, 0, 0])
-    image_points = norm2pix(img.shape, image_points, False)
+    image_points = norm2pix(img.shape, image_points, False).astype('f')
 
     image_x_coords = image_points[:, 0, 0].reshape(page_x_coords.shape)
     image_y_coords = image_points[:, 0, 1].reshape(page_y_coords.shape)
@@ -905,7 +969,6 @@ def main():
         params = optimize_params(name, small,
                                  dstpoints,
                                  span_counts, params)
-
         page_dims = get_page_dims(corners, rough_dims, params)
 
         outfile = remap_image(name, img, small, page_dims, params)
