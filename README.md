@@ -5,7 +5,7 @@ Page dewarping and thresholding using a "cubic sheet" model - see full writeup a
 
 My modification:
 
-Add horizontal correction based on the derivative of the cubic curve.
+Add horizontal correction based on the derivative of the estimated cubic curve.
 
 Rewrite the projection and objective function using Autograd so that the derivative of the objective function w.r.t the parameters could be calculated. Switching the optimization method from "Powell" to "L-BFGS-B" or "TNC" gets 10x speed-up.
 
