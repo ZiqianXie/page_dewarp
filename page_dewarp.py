@@ -835,7 +835,8 @@ def get_page_dims(corners, rough_dims, params):
         proj_br = project_xy(dims, params)
         return np.sum((dst_br - proj_br.flatten())**2)
 
-    res = scipy.optimize.minimize(objective, dims, method='Powell')
+    res = scipy.optimize.minimize(objective, dims, jac=grad(objective),
+                                  method='L-BFGS-B')
     dims = res.x
 
     print '  got page dims', dims[0], 'x', dims[1]
