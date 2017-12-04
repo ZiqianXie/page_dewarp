@@ -7,7 +7,7 @@ My modification:
 
 Add horizontal correction based on the derivative of the estimated cubic curve.
 
-Rewrite the projection and objective function using Autograd so that the derivative of the objective function w.r.t the parameters could be calculated. Switching the optimization method from "Powell" to "L-BFGS-B" or "TNC" gets 10x speed-up.
+Rewrite the projection and objective function using Autograd so that the derivative of the objective function w.r.t. the parameters could be calculated. Switching the optimization method from "Powell" to "L-BFGS-B" or "TNC" gets 10x speed-up.
 
 Requirements:
 
